@@ -1,0 +1,127 @@
+alias: Intelligente Gartenbewässerung nach Wetterlage
+description: >-
+  Voll dynamische Gartenbewässerung mit Regen, Temperatur, UV-Index,
+  Luftfeuchtigkeit und Wintermodus.
+triggers:
+  - event: sunrise
+    trigger: sun
+  - event: sunset
+    trigger: sun
+conditions:
+  - condition: numeric_state
+    entity_id: sensor.YOUR_WIND_SPEED_SENSOR         # Hier dein Windgeschwindigkeitssensor einfügen
+    below: 25
+  - condition: numeric_state
+    entity_id: sensor.YOUR_TEMP_MIN_SENSOR           # Hier dein Temperatursensor (Min) einfügen
+    above: 5
+actions:
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ allow_watering | bool }}"
+        sequence:
+          - target:
+              entity_id: switch.YOUR_WATERING_SWITCH  # Hier deinen Bewässerungsschalter einfügen
+            action: switch.turn_on
+            data: {}
+          - data:
+              message: >
+                🚿 **Bewässerung gestartet!** 🕐 Zeit: {{ now().strftime('%H:%M') }}
+
+                🌡️ Temperatur Min/Max: {{ temperature_min }}°C / {{ temperature_max }}°C  
+                💨 Wind: {{ wind_speed }} km/h  
+                💧 Luftfeuchtigkeit: {{ humidity }} %  
+                🌧️ Regen heute: {{ rain_today }} mm  
+                🌧️ Regen gestern: {{ rain_yesterday }} mm  
+                🌦️ Regen morgen: {{ rain_forecast_tomorrow }} mm  
+                📈 Regen-Wahrscheinlichkeit morgen: {{ (rain_probability_tomorrow * 100) | round(0) }} %  
+                🔆 UV-Index: {{ uv_index }}  
+                🕒 Geplante Laufzeit: {{ watering_duration }} Minuten
+            action: notify.telegram
+            # Telegram-Integration konfigurieren (in secrets.yaml):
+            # telegram_bot_token: "HIER_BOT_TOKEN"
+            # telegram_chat_id: "HIER_CHAT_ID"
+          - delay:
+              minutes: "{{ watering_duration }}"
+          - target:
+              entity_id: switch.YOUR_WATERING_SWITCH
+            action: switch.turn_off
+            data: {}
+          - data:
+              message: >
+                🛑 **Bewässerung beendet!** 🕐 Zeit: {{ now().strftime('%H:%M') }}
+            action: notify.telegram
+    default:
+      - data:
+          message: >
+            ❌ **Keine Bewässerung notwendig** 🕐 Zeit: {{ now().strftime('%H:%M') }}
+
+            Grund: {{ no_watering_reason }}
+
+            🌡️ Temperatur Min/Max: {{ temperature_min }}°C / {{ temperature_max }}°C  
+            💨 Wind: {{ wind_speed }} km/h  
+            💧 Luftfeuchtigkeit: {{ humidity }} %  
+            🌧️ Regen heute: {{ rain_today }} mm  
+            🌧️ Regen gestern: {{ rain_yesterday }} mm  
+            🌦️ Regen morgen: {{ rain_forecast_tomorrow }} mm  
+            📈 Regen-Wahrscheinlichkeit morgen: {{ (rain_probability_tomorrow * 100) | round(0) }} %  
+            🔆 UV-Index: {{ uv_index }}
+        action: notify.telegram
+variables:
+  temperature_min: "{{ states('sensor.YOUR_TEMP_MIN_SENSOR') | float(0) }}"
+  temperature_max: "{{ states('sensor.YOUR_TEMP_MAX_SENSOR') | float(0) }}"
+  wind_speed: "{{ states('sensor.YOUR_WIND_SPEED_SENSOR') | float(0) }}"
+  humidity: "{{ states('sensor.YOUR_HUMIDITY_SENSOR') | float(0) }}"
+  uv_index: "{{ states('sensor.YOUR_UV_INDEX_SENSOR') | float(5) }}"
+  rain_today: "{{ states('sensor.YOUR_RAIN_TODAY_SENSOR') | float(0) }}"
+  rain_yesterday: "{{ states('sensor.YOUR_RAIN_YESTERDAY_SENSOR') | float(0) }}"
+  rain_forecast_today: "{{ states('sensor.YOUR_RAIN_FORECAST_TODAY_SENSOR') | float(0) }}"
+  rain_forecast_tomorrow: "{{ states('sensor.YOUR_RAIN_FORECAST_TOMORROW_SENSOR') | float(0) }}"
+  rain_probability_tomorrow: "{{ states('sensor.YOUR_RAIN_PROBABILITY_TOMORROW_SENSOR') | float(0) }}"
+  month: "{{ now().month }}"
+  wintermode: "{{ month in [11,12,1,2,3] }}"
+  allow_watering: |
+    {{ not wintermode
+       and humidity <= 90
+       and rain_today <= 5
+       and rain_yesterday <= 5
+       and rain_forecast_tomorrow <= 2
+       and rain_probability_tomorrow <= 60
+       and temperature_min > 5 }}
+  watering_duration: |
+    {% if month in [3, 4, 5, 9, 10] %}
+      15
+    {% elif temperature_max < 12 %}
+      15
+    {% elif temperature_max > 30 %}
+      {% if uv_index > 7 %}
+        45
+      {% else %}
+        40
+      {% endif %}
+    {% else %}
+      {% if uv_index > 7 %}
+        25
+      {% else %}
+        30
+      {% endif %}
+    {% endif %}
+  no_watering_reason: |
+    {% if wintermode %}
+      "❄️ Wintermodus aktiv: Keine Bewässerung zwischen November und März"
+    {% elif humidity > 90 %}
+      "💧 Hohe Luftfeuchtigkeit: {{ humidity }}%"
+    {% elif rain_today > 5 %}
+      "🌧️ Heute schon genug Regen: {{ rain_today }} mm"
+    {% elif rain_yesterday > 5 %}
+      "🌧️ Gestern schon genug Regen: {{ rain_yesterday }} mm"
+    {% elif rain_forecast_tomorrow > 2 %}
+      "🌦️ Morgen wird Regen erwartet: {{ rain_forecast_tomorrow }} mm"
+    {% elif rain_probability_tomorrow > 60 %}
+      "🌦️ Hohe Regenwahrscheinlichkeit morgen: {{ (rain_probability_tomorrow * 100) | round(0) }}%"
+    {% elif temperature_min < 5 %}
+      "❄️ Zu kalt für Bewässerung (min {{ temperature_min }}°C)"
+    {% else %}
+      "Unbekannter Grund"
+    {% endif %}
+mode: single
